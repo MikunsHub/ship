@@ -137,35 +137,36 @@ func usageMessage() {
 }
 
 func createPrs(baseBranch string, currentBranch string) {
-	fmt.Printf("Pr created: %s<=>%s \n", baseBranch, currentBranch)
+	fmt.Printf("Creating pull request: %s <- %s \n", baseBranch, currentBranch)
+	output, err := commands.CreatePR(baseBranch,currentBranch,currentBranch,currentBranch)
+	if err != nil {
+		fmt.Printf("Error checking out main: %s\n", output)
+		return
+	}
 }
 
 func createFeatureBranch(branchName string) {
 	fmt.Printf("📦 Starting feature workflow: %s (from %s)\n", branchName, MAIN)
 	fmt.Println("")
 
-	// Checkout main branch
 	output, err := commands.CheckOutMain()
 	if err != nil {
 		fmt.Printf("Error checking out main: %s\n", output)
 		return
 	}
 
-	// Pull latest from main
 	output, err = commands.PullMainBranch()
 	if err != nil {
 		fmt.Printf("Error pulling main: %s\n", output)
 		return
 	}
 
-	// Create feature branch
 	output, err = commands.CreateFeatureBranch(branchName)
 	if err != nil {
 		fmt.Printf("Error creating feature branch: %s\n", output)
 		return
 	}
 
-	// Push branch to origin
 	output, err = commands.PushBranchToOrigin(branchName)
 	if err != nil {
 		fmt.Printf("Error pushing branch to origin: %s\n", output)
