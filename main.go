@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
+
+	"google.golang.org/genai"
 )
 
 type CommandFunc func() (string, error)
@@ -16,6 +21,7 @@ type Commands struct {
 	PullMainBranch      CommandFunc
 	CreateFeatureBranch func(branchName string) (string, error)
 	PushBranchToOrigin  func(branchName string) (string, error)
+	GetCommits          func(base, head string) ([]string, error)
 }
 
 var commands = Commands{
@@ -25,7 +31,7 @@ var commands = Commands{
 		if err != nil {
 			return "", err
 		}
-		return string(output), nil
+		return strings.TrimSpace(string(output)), nil
 	},
 	CreatePR: func(base, head, title, body string) (string, error) {
 		cmd := exec.Command(
@@ -66,6 +72,20 @@ var commands = Commands{
 		output, err := cmd.CombinedOutput()
 		return string(output), err
 	},
+	GetCommits: func(base, head string) ([]string, error) {
+		cmd := exec.Command(
+			"git", "log", "--oneline", fmt.Sprintf("%s..%s", base, head),
+		)
+		output, err := cmd.Output()
+		if err != nil {
+			return nil, err
+		}
+		commits := strings.Split(strings.TrimSpace(string(output)), "\n")
+		if len(commits) == 1 && commits[0] == "" {
+			return []string{}, nil
+		}
+		return commits, nil
+	},
 }
 
 const MAIN string = "main"
@@ -79,10 +99,16 @@ func main() {
 }
 
 func ship() {
+	if len(os.Args) < 2 {
+		showUsageMessage()
+		return
+	}
+
 	first_arg := os.Args[1]
 
 	if slices.Contains(helpOpts, first_arg) {
-		usageMessage()
+		showUsageMessage()
+		return
 	}
 
 	if slices.Contains(newFeatureOpts, first_arg) {
@@ -112,14 +138,14 @@ func ship() {
 				createPrs(base, currentBranch)
 			}
 		} else {
-			createPrs(currentBranch, targetBranch)
+			createPrs(targetBranch, currentBranch)
 		}
 		fmt.Println("All Prs created")
 	}
 
 }
 
-func usageMessage() {
+func showUsageMessage() {
 	fmt.Println("usage: ship [options]")
 
 	fmt.Println("To see help, run `ship -h` or `ship help`")
@@ -129,7 +155,7 @@ func usageMessage() {
 	fmt.Println("    -s <target-branch>          Create PR to specific branch only")
 	fmt.Println("")
 	fmt.Println("Examples:")
-	fmt.Println("  ship -n mikun/my-feature       # creates from main")
+	fmt.Println("  ship -f mikun/my-feature       # creates from main")
 	fmt.Println("  ship prs mikun/my-feature      # creates 3 PRs to main, stage, dev")
 	fmt.Println("  ship prs                       # uses current branch, creates 3 PRs")
 	fmt.Println("  ship prs -s stage              # PR current branch to stage only")
@@ -137,12 +163,71 @@ func usageMessage() {
 }
 
 func createPrs(baseBranch string, currentBranch string) {
-	fmt.Printf("Creating pull request: %s <- %s \n", baseBranch, currentBranch)
-	output, err := commands.CreatePR(baseBranch,currentBranch,currentBranch,currentBranch)
+	fmt.Printf("\n🔄 Creating pull request: %s <- %s\n", baseBranch, currentBranch)
+
+	// Get commits between branches
+	fmt.Println("📝 Fetching commits...")
+	commits, err := commands.GetCommits(baseBranch, currentBranch)
 	if err != nil {
-		fmt.Printf("Error checking out main: %s\n", output)
+		fmt.Printf("Error getting commits: %v\n", err)
 		return
 	}
+
+	if len(commits) == 0 {
+		fmt.Printf("⚠️  No commits found between %s and %s. Skipping PR creation.\n", baseBranch, currentBranch)
+		return
+	}
+
+	fmt.Printf("Found %d commit(s)\n", len(commits))
+
+	// Generate PR body using AI
+	fmt.Println("🤖 Generating PR description with AI...")
+	body, err := generatePRBody(commits)
+	if err != nil {
+		fmt.Printf("⚠️  AI generation failed: %v\n", err)
+		body = "Changes:\n" + strings.Join(commits, "\n")
+	}
+
+	// Show generated body to user
+	fmt.Println("\n┌─────────────────────────────────────────────┐")
+	fmt.Println("│         GENERATED PR DESCRIPTION             │")
+	fmt.Println("└─────────────────────────────────────────────┘")
+	fmt.Println(body)
+	fmt.Println("─────────────────────────────────────────────")
+
+	// Ask user to accept or edit
+	fmt.Print("\nAccept this description? (y/n/e for edit): ")
+	reader := bufio.NewReader(os.Stdin)
+	response, _ := reader.ReadString('\n')
+	response = strings.TrimSpace(strings.ToLower(response))
+
+	if response == "n" {
+		fmt.Println("❌ PR creation cancelled")
+		return
+	}
+
+	if response == "e" {
+		fmt.Println("\nEnter your custom PR description (press Ctrl+D when done):")
+		fmt.Println("─────────────────────────────────────────────")
+		customBody := ""
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			customBody += scanner.Text() + "\n"
+		}
+		if customBody != "" {
+			body = strings.TrimSpace(customBody)
+		}
+	}
+
+	// Create PR
+	title := fmt.Sprintf("Merge %s into %s", currentBranch, baseBranch)
+	fmt.Printf("\n🚀 Creating PR...\n")
+	output, err := commands.CreatePR(baseBranch, currentBranch, title, body)
+	if err != nil {
+		fmt.Printf("❌ Error creating PR: %s\n", output)
+		return
+	}
+	fmt.Printf("✅ PR created successfully!\n%s\n", output)
 }
 
 func createFeatureBranch(branchName string) {
@@ -177,4 +262,49 @@ func createFeatureBranch(branchName string) {
 	fmt.Println("")
 	fmt.Println("Make your changes, commit, and push. Then run:")
 	fmt.Println("  ship prs")
+}
+
+func generatePRBody(commits []string) (string, error) {
+	ctx := context.Background()
+
+	// Get API key from environment variable for security
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		apiKey = "***LEAKED_KEY_REMOVED***" // Fallback (should use env var)
+	}
+
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey: apiKey,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	commitsText := strings.Join(commits, "\n")
+	prompt := fmt.Sprintf(
+		`Analyze these git commits and generate a concise, professional PR description.
+
+Commits:
+%s
+
+Please provide:
+1. A brief summary (2-3 sentences) of what changed
+2. Key changes as bullet points
+3. Any notable implementation details
+
+Keep it concise and focus on the "why" and "what", not the "how".`,
+		commitsText,
+	)
+
+	resp, err := client.Models.GenerateContent(
+		ctx,
+		"gemini-2.0-flash-exp",
+		genai.Text(prompt),
+		nil,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	return resp.Text(), nil
 }
