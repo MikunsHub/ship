@@ -114,7 +114,11 @@ func ship() {
 	if slices.Contains(newFeatureOpts, first_arg) {
 		var userBranchName string
 		fmt.Print("Enter branch name:")
-		fmt.Scan(&userBranchName)
+		_, err := fmt.Scan(&userBranchName)
+		if err != nil {
+			fmt.Println("Error reading input:", err)
+			return
+		}
 		fmt.Println("your branch name is: ", userBranchName)
 		createFeatureBranch(userBranchName)
 	}
@@ -165,7 +169,6 @@ func showUsageMessage() {
 func createPrs(baseBranch string, currentBranch string) {
 	fmt.Printf("\n🔄 Creating pull request: %s <- %s\n", baseBranch, currentBranch)
 
-	// Get commits between branches
 	fmt.Println("📝 Fetching commits...")
 	commits, err := commands.GetCommits(baseBranch, currentBranch)
 	if err != nil {
@@ -180,7 +183,6 @@ func createPrs(baseBranch string, currentBranch string) {
 
 	fmt.Printf("Found %d commit(s)\n", len(commits))
 
-	// Generate PR body using AI
 	fmt.Println("🤖 Generating PR description with AI...")
 	body, err := generatePRBody(commits)
 	if err != nil {
@@ -188,14 +190,12 @@ func createPrs(baseBranch string, currentBranch string) {
 		body = "Changes:\n" + strings.Join(commits, "\n")
 	}
 
-	// Show generated body to user
 	fmt.Println("\n┌─────────────────────────────────────────────┐")
 	fmt.Println("│         GENERATED PR DESCRIPTION             │")
 	fmt.Println("└─────────────────────────────────────────────┘")
 	fmt.Println(body)
 	fmt.Println("─────────────────────────────────────────────")
 
-	// Ask user to accept or edit
 	fmt.Print("\nAccept this description? (y/n/e for edit): ")
 	reader := bufio.NewReader(os.Stdin)
 	response, _ := reader.ReadString('\n')
@@ -219,7 +219,6 @@ func createPrs(baseBranch string, currentBranch string) {
 		}
 	}
 
-	// Create PR
 	title := fmt.Sprintf("Merge %s into %s", currentBranch, baseBranch)
 	fmt.Printf("\n🚀 Creating PR...\n")
 	output, err := commands.CreatePR(baseBranch, currentBranch, title, body)
@@ -267,11 +266,7 @@ func createFeatureBranch(branchName string) {
 func generatePRBody(commits []string) (string, error) {
 	ctx := context.Background()
 
-	// Get API key from environment variable for security
 	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		apiKey = "AIzaSyCJ1YF56wCLfhK-FQu0u2704XbeUbUhukA" // Fallback (should use env var)
-	}
 
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey: apiKey,
@@ -281,25 +276,11 @@ func generatePRBody(commits []string) (string, error) {
 	}
 
 	commitsText := strings.Join(commits, "\n")
-	prompt := fmt.Sprintf(
-		`Analyze these git commits and generate a concise, professional PR description.
-
-Commits:
-%s
-
-Please provide:
-1. A brief summary (2-3 sentences) of what changed
-2. Key changes as bullet points
-3. Any notable implementation details
-
-Keep it concise and focus on the "why" and "what", not the "how".`,
-		commitsText,
-	)
 
 	resp, err := client.Models.GenerateContent(
 		ctx,
-		"gemini-2.0-flash-exp",
-		genai.Text(prompt),
+		"gemini-2.5-flash",
+		genai.Text(fmt.Sprintf(PrBodyPrompt, commitsText)),
 		nil,
 	)
 	if err != nil {
