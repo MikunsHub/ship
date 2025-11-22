@@ -1,0 +1,45 @@
+run:
+  timeout: 5m
+  concurrency: 4
+  tests: true
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - gofmt
+    - goimports
+    - gosimple
+    - unused
+    - errcheck
+    - revive
+    - gocritic
+    - typecheck
+    - gocyclo
+    - dupl
+    - ineffassign
+    - prealloc
+
+linters-settings:
+  revive:
+    confidence: 0.8
+    severity: warning
+    rules:
+      - name: exported
+        disabled: true
+  gocyclo:
+    min-complexity: 15
+  dupl:
+    threshold: 100
+  errcheck:
+    exclude-functions:
+      - fmt.Fprintf
+      - fmt.Fprint
+      - fmt.Fprintln
+  gofmt:
+    simplify: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-use-default: false
