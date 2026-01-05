@@ -12,6 +12,8 @@ import (
 	"google.golang.org/genai"
 )
 
+const GEMINI_MODEL = "gemini-2.5-flash"
+
 type CommandFunc func() (string, error)
 
 type Commands struct {
@@ -111,6 +113,11 @@ func ship() {
 		return
 	}
 
+	if first_arg == "config" {
+		handleConfig(os.Args[2:])
+		return
+	}
+
 	if slices.Contains(newFeatureOpts, first_arg) {
 		var userBranchName string
 		fmt.Print("Enter branch name:")
@@ -157,6 +164,10 @@ func showUsageMessage() {
 	fmt.Println("  -f <branch-name>              Start a new feature from main")
 	fmt.Println("  prs [branch-name] [-s target] Create PRs (uses current branch if not specified)")
 	fmt.Println("    -s <target-branch>          Create PR to specific branch only")
+	fmt.Println("  config                        Manage configuration")
+	fmt.Println("    set-key                     Securely store your Gemini API key")
+	fmt.Println("    remove-key                  Remove stored API key")
+	fmt.Println("    status                      Check if API key is configured")
 	fmt.Println("")
 	fmt.Println("Examples:")
 	fmt.Println("  ship -f mikun/my-feature       # creates from main")
@@ -164,12 +175,14 @@ func showUsageMessage() {
 	fmt.Println("  ship prs                       # uses current branch, creates 3 PRs")
 	fmt.Println("  ship prs -s stage              # PR current branch to stage only")
 	fmt.Println("  ship prs mikun/my-feature -s stage  # PR specified branch to stage")
+	fmt.Println("  ship config set-key            # save your Gemini API key")
+	fmt.Println("  ship config status             # check key configuration")
 }
 
 func createPrs(baseBranch string, currentBranch string) {
-	fmt.Printf("\n🔄 Creating pull request: %s <- %s\n", baseBranch, currentBranch)
+	fmt.Printf("\nCreating pull request: %s <- %s\n", baseBranch, currentBranch)
 
-	fmt.Println("📝 Fetching commits...")
+	fmt.Println("Fetching commits...")
 	commits, err := commands.GetCommits(baseBranch, currentBranch)
 	if err != nil {
 		fmt.Printf("Error getting commits: %v\n", err)
@@ -177,21 +190,21 @@ func createPrs(baseBranch string, currentBranch string) {
 	}
 
 	if len(commits) == 0 {
-		fmt.Printf("⚠️  No commits found between %s and %s. Skipping PR creation.\n", baseBranch, currentBranch)
+		fmt.Printf("No commits found between %s and %s. Skipping PR creation.\n", baseBranch, currentBranch)
 		return
 	}
 
 	fmt.Printf("Found %d commit(s)\n", len(commits))
 
-	fmt.Println("🤖 Generating PR description with AI...")
-	body, err := generatePRBody(commits)
-	if err != nil {
-		fmt.Printf("⚠️  AI generation failed: %v\n", err)
-		body = "Changes:\n" + strings.Join(commits, "\n")
-	}
+	fmt.Println("Generating PR description...")
+	body, usedAI := generatePRBody(commits)
 
 	fmt.Println("\n┌─────────────────────────────────────────────┐")
-	fmt.Println("│         GENERATED PR DESCRIPTION             │")
+	if usedAI {
+		fmt.Println("│       AI-GENERATED PR DESCRIPTION         │")
+	} else {
+		fmt.Println("│          PR DESCRIPTION FROM COMMITS          │")
+	}
 	fmt.Println("└─────────────────────────────────────────────┘")
 	fmt.Println(body)
 	fmt.Println("─────────────────────────────────────────────")
@@ -202,7 +215,7 @@ func createPrs(baseBranch string, currentBranch string) {
 	response = strings.TrimSpace(strings.ToLower(response))
 
 	if response == "n" {
-		fmt.Println("❌ PR creation cancelled")
+		fmt.Println("PR creation cancelled")
 		return
 	}
 
@@ -223,14 +236,14 @@ func createPrs(baseBranch string, currentBranch string) {
 	fmt.Printf("\n🚀 Creating PR...\n")
 	output, err := commands.CreatePR(baseBranch, currentBranch, title, body)
 	if err != nil {
-		fmt.Printf("❌ Error creating PR: %s\n", output)
+		fmt.Printf("Error creating PR: %s\n", output)
 		return
 	}
-	fmt.Printf("✅ PR created successfully!\n%s\n", output)
+	fmt.Printf("PR created successfully!\n%s\n", output)
 }
 
 func createFeatureBranch(branchName string) {
-	fmt.Printf("📦 Starting feature workflow: %s (from %s)\n", branchName, MAIN)
+	fmt.Printf("Starting feature workflow: %s (from %s)\n", branchName, MAIN)
 	fmt.Println("")
 
 	output, err := commands.CheckOutMain()
@@ -263,29 +276,44 @@ func createFeatureBranch(branchName string) {
 	fmt.Println("  ship prs")
 }
 
-func generatePRBody(commits []string) (string, error) {
-	ctx := context.Background()
+func generatePRBody(commits []string) (string, bool) {
+	apiKey := GetAPIKey()
 
-	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		return formatSimpleBody(commits), false
+	}
+
+	ctx := context.Background()
 
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey: apiKey,
 	})
 	if err != nil {
-		return "", err
+		return formatSimpleBody(commits), false
 	}
 
 	commitsText := strings.Join(commits, "\n")
 
 	resp, err := client.Models.GenerateContent(
 		ctx,
-		"gemini-2.5-flash",
+		GEMINI_MODEL,
 		genai.Text(fmt.Sprintf(PrBodyPrompt, commitsText)),
 		nil,
 	)
 	if err != nil {
-		return "", err
+		return formatSimpleBody(commits), false
 	}
 
-	return resp.Text(), nil
+	return resp.Text(), true
+}
+
+func formatSimpleBody(commits []string) string {
+	var sb strings.Builder
+	sb.WriteString("## Changes\n\n")
+	for _, commit := range commits {
+		sb.WriteString("- ")
+		sb.WriteString(commit)
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
