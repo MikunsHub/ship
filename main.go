@@ -351,6 +351,7 @@ func generatePRBody(commits []string) (string, bool) {
 	apiKey := GetAPIKey()
 
 	if apiKey == "" {
+		fmt.Println("(No API key configured - using simple format)")
 		return formatSimpleBody(commits), false
 	}
 
@@ -360,6 +361,7 @@ func generatePRBody(commits []string) (string, bool) {
 		APIKey: apiKey,
 	})
 	if err != nil {
+		fmt.Printf("(AI client error: %v - using simple format)\n", err)
 		return formatSimpleBody(commits), false
 	}
 
@@ -372,6 +374,7 @@ func generatePRBody(commits []string) (string, bool) {
 		nil,
 	)
 	if err != nil {
+		fmt.Printf("(AI generation error: %v - using simple format)\n", err)
 		return formatSimpleBody(commits), false
 	}
 
