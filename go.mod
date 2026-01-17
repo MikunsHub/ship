@@ -1,4 +1,4 @@
-module ship
+module github.com/MikunsHub/ship
 
 go 1.24.7
 
