@@ -80,9 +80,9 @@ var commands = Commands{
 		cmd := exec.Command(
 			"git", "log", "--oneline", fmt.Sprintf("%s..%s", base, head),
 		)
-		output, err := cmd.Output()
+		output, err := cmd.CombinedOutput()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%v: %s", err, string(output))
 		}
 		commits := strings.Split(strings.TrimSpace(string(output)), "\n")
 		if len(commits) == 1 && commits[0] == "" {
@@ -148,17 +148,15 @@ func ship() {
 			targetBranch = os.Args[3]
 		}
 
-		fmt.Println(currentBranch)
-		fmt.Println(targetBranch)
-
 		if targetBranch == "" {
+			var branchesToCreate []string
 			for _, base := range baseBranches {
-				createPrs(base, currentBranch)
+				branchesToCreate = append(branchesToCreate, base)
 			}
+			createMultiplePrs(branchesToCreate, currentBranch)
 		} else {
-			createPrs(targetBranch, currentBranch)
+			createPrs(targetBranch, currentBranch, "", false)
 		}
-		fmt.Println("All Prs created")
 	}
 
 }
@@ -186,23 +184,26 @@ func showUsageMessage() {
 	fmt.Println("  ship config status             # check key configuration")
 }
 
-func createPrs(baseBranch string, currentBranch string) {
-	fmt.Printf("\nCreating pull request: %s <- %s\n", baseBranch, currentBranch)
+func createMultiplePrs(baseBranches []string, currentBranch string) {
+	// Fetch commits once
+	var commits []string
+	var err error
 
-	fmt.Println("Fetching commits...")
-	commits, err := commands.GetCommits(baseBranch, currentBranch)
-	if err != nil {
-		fmt.Printf("Error getting commits: %v\n", err)
-		return
+	// Use first branch to fetch commits (they should be the same for all)
+	if len(baseBranches) > 0 {
+		commits, err = commands.GetCommits(baseBranches[0], currentBranch)
+		if err != nil {
+			fmt.Printf("Error getting commits: %v\n", err)
+			return
+		}
 	}
 
 	if len(commits) == 0 {
-		fmt.Printf("No commits found between %s and %s. Skipping PR creation.\n", baseBranch, currentBranch)
+		fmt.Println("No commits found. Nothing to create PRs for.")
 		return
 	}
 
 	fmt.Printf("Found %d commit(s)\n", len(commits))
-
 	fmt.Println("Generating PR description...")
 	body, usedAI := generatePRBody(commits)
 
@@ -236,6 +237,69 @@ func createPrs(baseBranch string, currentBranch string) {
 		}
 		if customBody != "" {
 			body = strings.TrimSpace(customBody)
+		}
+	}
+
+	// Create PRs to all branches with the same description
+	for _, base := range baseBranches {
+		createPrs(base, currentBranch, body, usedAI)
+	}
+	fmt.Println("All PRs created")
+}
+
+func createPrs(baseBranch string, currentBranch string, description string, usedAI bool) {
+	fmt.Printf("\nCreating pull request: %s <- %s\n", baseBranch, currentBranch)
+
+	// If description is provided, use it directly; otherwise generate
+	body := description
+	if body == "" {
+		fmt.Println("Fetching commits...")
+		commits, err := commands.GetCommits(baseBranch, currentBranch)
+		if err != nil {
+			fmt.Printf("Error getting commits: %v\n", err)
+			return
+		}
+
+		if len(commits) == 0 {
+			fmt.Printf("No commits found between %s and %s. Skipping PR creation.\n", baseBranch, currentBranch)
+			return
+		}
+
+		fmt.Printf("Found %d commit(s)\n", len(commits))
+		fmt.Println("Generating PR description...")
+		body, usedAI = generatePRBody(commits)
+
+		fmt.Println("\n┌─────────────────────────────────────────────┐")
+		if usedAI {
+			fmt.Println("│       AI-GENERATED PR DESCRIPTION         │")
+		} else {
+			fmt.Println("│          PR DESCRIPTION FROM COMMITS          │")
+		}
+		fmt.Println("└─────────────────────────────────────────────┘")
+		fmt.Println(body)
+		fmt.Println("─────────────────────────────────────────────")
+
+		fmt.Print("\nAccept this description? (y/n/e for edit): ")
+		reader := bufio.NewReader(os.Stdin)
+		response, _ := reader.ReadString('\n')
+		response = strings.TrimSpace(strings.ToLower(response))
+
+		if response == "n" {
+			fmt.Println("PR creation cancelled")
+			return
+		}
+
+		if response == "e" {
+			fmt.Println("\nEnter your custom PR description (press Ctrl+D when done):")
+			fmt.Println("─────────────────────────────────────────────")
+			customBody := ""
+			scanner := bufio.NewScanner(os.Stdin)
+			for scanner.Scan() {
+				customBody += scanner.Text() + "\n"
+			}
+			if customBody != "" {
+				body = strings.TrimSpace(customBody)
+			}
 		}
 	}
 
