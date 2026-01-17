@@ -14,6 +14,8 @@ import (
 
 const GEMINI_MODEL = "gemini-2.5-flash"
 
+var Version = "dev"
+
 type CommandFunc func() (string, error)
 
 type Commands struct {
@@ -107,6 +109,11 @@ func ship() {
 	}
 
 	first_arg := os.Args[1]
+
+	if slices.Contains([]string{"-v", "--version"}, first_arg) {
+		fmt.Printf("ship version %s\n", Version)
+		return
+	}
 
 	if slices.Contains(helpOpts, first_arg) {
 		showUsageMessage()
